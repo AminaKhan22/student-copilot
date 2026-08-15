@@ -4,14 +4,14 @@ import * as DocumentPicker from "expo-document-picker";
 import React, { useState } from "react";
 
 import {
-    ActivityIndicator,
-    Alert,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 
 const API_URL =
@@ -23,14 +23,9 @@ export default function CourseMaterialScreen() {
       null
     );
 
-  const [question, setQuestion] =
-    useState("");
-
-  const [answer, setAnswer] =
-    useState("");
-
-  const [loading, setLoading] =
-    useState(false);
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [loading, setLoading] = useState(false);
 
   // =====================================================
   // PICK PDF
@@ -62,16 +57,93 @@ export default function CourseMaterialScreen() {
         );
       }
     } catch (error) {
-      console.error(
-        "PDF picker error:",
-        error
-      );
+      console.error("PDF picker error:", error);
 
       Alert.alert(
         "Error",
         "Could not select the PDF. Please try again."
       );
     }
+  };
+
+  // =====================================================
+  // CONVERT PDF TO BASE64
+  // =====================================================
+
+  const getPDFBase64 = async (
+    file: DocumentPicker.DocumentPickerAsset
+  ): Promise<string> => {
+    // -----------------------------------------------
+    // WEB
+    // -----------------------------------------------
+
+    const webFile = (file as any).file;
+
+    if (webFile) {
+      console.log("Reading PDF from Web File object.");
+
+      const arrayBuffer =
+        await webFile.arrayBuffer();
+
+      const bytes = new Uint8Array(arrayBuffer);
+
+      let binary = "";
+
+      const chunkSize = 0x8000;
+
+      for (
+        let i = 0;
+        i < bytes.length;
+        i += chunkSize
+      ) {
+        const chunk = bytes.subarray(
+          i,
+          Math.min(i + chunkSize, bytes.length)
+        );
+
+        binary += String.fromCharCode(...chunk);
+      }
+
+      return btoa(binary);
+    }
+
+    // -----------------------------------------------
+    // NATIVE
+    // -----------------------------------------------
+
+    console.log("Reading PDF from native URI.");
+
+    const response = await fetch(file.uri);
+
+    if (!response.ok) {
+      throw new Error(
+        "Could not read the selected PDF."
+      );
+    }
+
+    const arrayBuffer =
+      await response.arrayBuffer();
+
+    const bytes = new Uint8Array(arrayBuffer);
+
+    let binary = "";
+
+    const chunkSize = 0x8000;
+
+    for (
+      let i = 0;
+      i < bytes.length;
+      i += chunkSize
+    ) {
+      const chunk = bytes.subarray(
+        i,
+        Math.min(i + chunkSize, bytes.length)
+      );
+
+      binary += String.fromCharCode(...chunk);
+    }
+
+    return btoa(binary);
   };
 
   // =====================================================
@@ -93,81 +165,46 @@ export default function CourseMaterialScreen() {
     setAnswer("");
 
     try {
-      console.log(
-        "Preparing PDF for AI..."
-      );
+      console.log("Preparing PDF for AI...");
 
-      const formData = new FormData();
+      // -----------------------------------------------
+      // Convert PDF to Base64
+      // -----------------------------------------------
 
-      // -----------------------------
-      // Text fields
-      // -----------------------------
-
-      formData.append(
-        "question",
-        userQuestion
-      );
-
-      formData.append(
-        "studentName",
-        "Student"
-      );
-
-      formData.append(
-        "subjects",
-        "Course Material"
-      );
-
-      // -----------------------------
-      // PDF FILE
-      // -----------------------------
-
-      // Expo Web provides a File object.
-      const webFile =
-        (selectedFile as any).file;
-
-      if (webFile) {
-        console.log(
-          "Using Web File object."
-        );
-
-        formData.append(
-          "pdf",
-          webFile,
-          selectedFile.name
-        );
-      } else {
-        console.log(
-          "Using native file URI."
-        );
-
-        formData.append(
-          "pdf",
-          {
-            uri: selectedFile.uri,
-            name:
-              selectedFile.name ||
-              "course-material.pdf",
-            type:
-              selectedFile.mimeType ||
-              "application/pdf",
-          } as any
-        );
-      }
+      const pdfBase64 =
+        await getPDFBase64(selectedFile);
 
       console.log(
-        "Sending PDF to:",
-        API_URL
+        "PDF converted successfully."
       );
 
-      // IMPORTANT:
-      // Do NOT manually set Content-Type.
-      // fetch automatically adds the multipart boundary.
+      console.log(
+        "PDF size:",
+        pdfBase64.length
+      );
+
+      // -----------------------------------------------
+      // Send JSON
+      // -----------------------------------------------
+
       const response = await fetch(
         API_URL,
         {
           method: "POST",
-          body: formData,
+
+          headers: {
+            "Content-Type": "application/json",
+          },
+
+          body: JSON.stringify({
+            question: userQuestion,
+
+            studentName: "Student",
+
+            subjects: "Course Material",
+
+            pdfBase64,
+          }),
         }
       );
 
@@ -176,19 +213,12 @@ export default function CourseMaterialScreen() {
         response.status
       );
 
-      // -----------------------------
-      // Read response safely
-      // -----------------------------
-
       const responseText =
         await response.text();
 
       console.log(
         "AI raw response:",
-        responseText.substring(
-          0,
-          1000
-        )
+        responseText.substring(0, 1000)
       );
 
       let data: any = {};
@@ -198,20 +228,11 @@ export default function CourseMaterialScreen() {
           responseText
             ? JSON.parse(responseText)
             : {};
-      } catch (jsonError) {
-        console.error(
-          "Could not parse server response:",
-          jsonError
-        );
-
+      } catch {
         throw new Error(
           "The server returned an invalid response."
         );
       }
-
-      // -----------------------------
-      // Server error
-      // -----------------------------
 
       if (!response.ok) {
         throw new Error(
@@ -220,23 +241,16 @@ export default function CourseMaterialScreen() {
         );
       }
 
-      // -----------------------------
-      // AI answer
-      // -----------------------------
-
       if (
         !data?.answer ||
-        typeof data.answer !==
-          "string"
+        typeof data.answer !== "string"
       ) {
         throw new Error(
           "The AI returned an empty answer."
         );
       }
 
-      setAnswer(
-        data.answer.trim()
-      );
+      setAnswer(data.answer.trim());
     } catch (error) {
       console.error(
         "PDF AI error:",
@@ -319,9 +333,7 @@ If the PDF does not contain enough information to answer the question, clearly s
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={
-        styles.content
-      }
+      contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
     >
       <Text style={styles.title}>
@@ -333,10 +345,6 @@ If the PDF does not contain enough information to answer the question, clearly s
         study it with AI.
       </Text>
 
-      {/* ================================================= */}
-      {/* PDF UPLOAD */}
-      {/* ================================================= */}
-
       <View style={styles.uploadCard}>
         <Text style={styles.uploadIcon}>
           📄
@@ -346,11 +354,7 @@ If the PDF does not contain enough information to answer the question, clearly s
           Upload PDF
         </Text>
 
-        <Text
-          style={
-            styles.uploadDescription
-          }
-        >
+        <Text style={styles.uploadDescription}>
           Select notes, lectures,
           textbook chapters,
           assignments, or other course
@@ -362,26 +366,16 @@ If the PDF does not contain enough information to answer the question, clearly s
           onPress={pickPDF}
           disabled={loading}
         >
-          <Text
-            style={
-              styles.uploadButtonText
-            }
-          >
+          <Text style={styles.uploadButtonText}>
             + Choose PDF
           </Text>
         </Pressable>
       </View>
 
-      {/* ================================================= */}
-      {/* SELECTED FILE */}
-      {/* ================================================= */}
-
       {selectedFile && (
         <View style={styles.fileCard}>
           <View
-            style={
-              styles.fileIconContainer
-            }
+            style={styles.fileIconContainer}
           >
             <Text style={styles.fileIcon}>
               📕
@@ -397,9 +391,7 @@ If the PDF does not contain enough information to answer the question, clearly s
             </Text>
 
             {selectedFile.size ? (
-              <Text
-                style={styles.fileSize}
-              >
+              <Text style={styles.fileSize}>
                 {(
                   selectedFile.size /
                   1024 /
@@ -409,18 +401,12 @@ If the PDF does not contain enough information to answer the question, clearly s
               </Text>
             ) : null}
 
-            <Text
-              style={styles.fileStatus}
-            >
+            <Text style={styles.fileStatus}>
               ✓ PDF selected
             </Text>
           </View>
         </View>
       )}
-
-      {/* ================================================= */}
-      {/* AI STUDY SECTION */}
-      {/* ================================================= */}
 
       {selectedFile && (
         <View style={styles.aiCard}>
@@ -428,18 +414,12 @@ If the PDF does not contain enough information to answer the question, clearly s
             🤖 Study With AI
           </Text>
 
-          <Text
-            style={
-              styles.aiDescription
-            }
-          >
+          <Text style={styles.aiDescription}>
             Gemini can read your PDF and
             help you understand the
             material, summarize it, and
             answer questions about it.
           </Text>
-
-          {/* SUMMARY */}
 
           <Pressable
             style={[
@@ -465,20 +445,12 @@ If the PDF does not contain enough information to answer the question, clearly s
             )}
           </Pressable>
 
-          {/* QUESTION */}
-
-          <Text
-            style={
-              styles.questionLabel
-            }
-          >
+          <Text style={styles.questionLabel}>
             Ask a question about this PDF
           </Text>
 
           <TextInput
-            style={
-              styles.questionInput
-            }
+            style={styles.questionInput}
             placeholder="Example: Explain Newton's second law from this material."
             placeholderTextColor="#98A2B3"
             value={question}
@@ -502,11 +474,7 @@ If the PDF does not contain enough information to answer the question, clearly s
                 color="#FFFFFF"
               />
             ) : (
-              <Text
-                style={
-                  styles.askButtonText
-                }
-              >
+              <Text style={styles.askButtonText}>
                 Ask AI
               </Text>
             )}
@@ -514,25 +482,13 @@ If the PDF does not contain enough information to answer the question, clearly s
         </View>
       )}
 
-      {/* ================================================= */}
-      {/* AI ANSWER */}
-      {/* ================================================= */}
-
       {answer ? (
-        <View
-          style={styles.answerCard}
-        >
-          <Text
-            style={
-              styles.answerTitle
-            }
-          >
+        <View style={styles.answerCard}>
+          <Text style={styles.answerTitle}>
             🤖 AI Study Coach
           </Text>
 
-          <Text
-            style={styles.answerText}
-          >
+          <Text style={styles.answerText}>
             {answer}
           </Text>
         </View>

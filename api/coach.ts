@@ -1,10 +1,7 @@
 // api/coach.ts
 
-import formidable from "formidable";
-import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-// Vercel Node.js runtime
 export const config = {
   api: {
     bodyParser: false,
@@ -12,6 +9,7 @@ export const config = {
 };
 
 const GEMINI_MODEL = "gemini-2.5-flash";
+
 const GEMINI_URL =
   `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
@@ -36,23 +34,26 @@ function sendJSON(
   res.end(JSON.stringify(data));
 }
 
-function getFirst(value: unknown): string {
-  if (Array.isArray(value)) {
-    return String(value[0] ?? "");
-  }
+async function readBody(
+  req: IncomingMessage
+): Promise<any> {
+  return new Promise((resolve, reject) => {
+    let body = "";
 
-  return String(value ?? "");
-}
+    req.on("data", (chunk) => {
+      body += chunk.toString();
+    });
 
-function getNumber(
-  value: unknown,
-  fallback: number
-): number {
-  const number = Number(getFirst(value));
+    req.on("end", () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch {
+        reject(new Error("Invalid JSON request."));
+      }
+    });
 
-  return Number.isFinite(number)
-    ? number
-    : fallback;
+    req.on("error", reject);
+  });
 }
 
 function buildPrompt(data: {
@@ -133,12 +134,6 @@ For powers:
 x²
 x³
 xⁿ
-
-For subscripts:
-V₁
-V₂
-I₁
-I₂
 
 For Greek letters:
 α β γ θ λ μ π σ ω Δ Ω
@@ -228,17 +223,15 @@ async function callGemini(
 
   const timeout = setTimeout(() => {
     controller.abort();
-  }, 50000);
+  }, 55000);
 
   try {
     const response = await fetch(GEMINI_URL, {
       method: "POST",
-
       headers: {
         "Content-Type": "application/json",
         "x-goog-api-key": apiKey,
       },
-
       body: JSON.stringify({
         contents: [
           {
@@ -246,16 +239,24 @@ async function callGemini(
             parts,
           },
         ],
-
         generationConfig: {
           maxOutputTokens: 3000,
         },
       }),
-
       signal: controller.signal,
     });
 
-    const data = await response.json();
+    const rawText = await response.text();
+
+    let data: any;
+
+    try {
+      data = rawText ? JSON.parse(rawText) : {};
+    } catch {
+      throw new Error(
+        "Gemini returned an invalid response."
+      );
+    }
 
     if (!response.ok) {
       console.error(
@@ -265,13 +266,16 @@ async function callGemini(
 
       throw new Error(
         data?.error?.message ||
-          `Gemini request failed with status ${response.status}`
+          `Gemini request failed with status ${response.status}.`
       );
     }
 
     const answer =
       data?.candidates?.[0]?.content?.parts
-        ?.map((part: { text?: string }) => part?.text || "")
+        ?.map(
+          (part: { text?: string }) =>
+            part?.text || ""
+        )
         .join("")
         .trim();
 
@@ -285,57 +289,6 @@ async function callGemini(
   } finally {
     clearTimeout(timeout);
   }
-}
-
-function parseMultipart(
-  req: IncomingMessage
-): Promise<{
-  fields: formidable.Fields;
-  files: formidable.Files;
-}> {
-  return new Promise((resolve, reject) => {
-    const form = formidable({
-      multiples: false,
-      keepExtensions: true,
-      maxFileSize: 20 * 1024 * 1024,
-    });
-
-    form.parse(req, (error, fields, files) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-
-      resolve({
-        fields,
-        files,
-      });
-    });
-  });
-}
-
-async function readJSONBody(
-  req: IncomingMessage
-): Promise<any> {
-  return new Promise((resolve, reject) => {
-    let body = "";
-
-    req.on("data", (chunk) => {
-      body += chunk.toString();
-    });
-
-    req.on("end", () => {
-      try {
-        resolve(body ? JSON.parse(body) : {});
-      } catch {
-        reject(
-          new Error("Invalid JSON request.")
-        );
-      }
-    });
-
-    req.on("error", reject);
-  });
 }
 
 export default async function handler(
@@ -373,19 +326,18 @@ export default async function handler(
     }
 
     // -------------------------------------------------
-    // ONLY POST
+    // POST ONLY
     // -------------------------------------------------
 
     if (req.method !== "POST") {
       sendJSON(res, 405, {
         error: "Method not allowed. Use POST.",
       });
-
       return;
     }
 
     // -------------------------------------------------
-    // GEMINI KEY
+    // API KEY
     // -------------------------------------------------
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -395,136 +347,51 @@ export default async function handler(
         error:
           "GEMINI_API_KEY is not configured in Vercel.",
       });
-
       return;
     }
 
     // -------------------------------------------------
-    // DATA
+    // READ JSON
     // -------------------------------------------------
 
-    let question = "";
-    let studentName = "Student";
-    let subjects = "";
-    let currentTask = "";
-    let remainingTasks = 0;
-    let focusedMinutes = 0;
-    let dailyHours = 3;
+    const body = await readBody(req);
 
-    let pdfBase64 = "";
+    const question =
+      String(body?.question ?? "").trim();
 
-    const contentType =
-      String(req.headers["content-type"] || "")
-        .toLowerCase();
+    const studentName =
+      String(
+        body?.studentName ?? "Student"
+      ).trim() || "Student";
 
-    // -------------------------------------------------
-    // PDF / MULTIPART REQUEST
-    // -------------------------------------------------
+    const subjects =
+      String(body?.subjects ?? "").trim();
 
-    if (contentType.includes("multipart/form-data")) {
-      const { fields, files } =
-        await parseMultipart(req);
+    const currentTask =
+      String(body?.currentTask ?? "").trim();
 
-      question = getFirst(fields.question).trim();
+    const remainingTasks =
+      Number(body?.remainingTasks ?? 0);
 
-      studentName =
-        getFirst(fields.studentName).trim() ||
-        "Student";
+    const focusedMinutes =
+      Number(body?.focusedMinutes ?? 0);
 
-      subjects =
-        getFirst(fields.subjects).trim();
+    const dailyHours =
+      Number(body?.dailyHours ?? 3);
 
-      currentTask =
-        getFirst(fields.currentTask).trim();
-
-      remainingTasks = getNumber(
-        fields.remainingTasks,
-        0
-      );
-
-      focusedMinutes = getNumber(
-        fields.focusedMinutes,
-        0
-      );
-
-      dailyHours = getNumber(
-        fields.dailyHours,
-        3
-      );
-
-      // ---------------------------------------------
-      // PDF FILE
-      // ---------------------------------------------
-
-      const uploadedPDF = files.pdf;
-
-      const pdfFile = Array.isArray(uploadedPDF)
-        ? uploadedPDF[0]
-        : uploadedPDF;
-
-      if (pdfFile) {
-        const filePath = pdfFile.filepath;
-
-        if (!filePath) {
-          sendJSON(res, 400, {
-            error:
-              "The PDF was received but no file path was available.",
-          });
-
-          return;
-        }
-
-        const pdfBuffer =
-          await fs.promises.readFile(filePath);
-
-        pdfBase64 =
-          pdfBuffer.toString("base64");
-      }
-    }
+    const pdfBase64 =
+      typeof body?.pdfBase64 === "string"
+        ? body.pdfBase64
+        : "";
 
     // -------------------------------------------------
-    // NORMAL JSON REQUEST
-    // -------------------------------------------------
-
-    else {
-      const body = await readJSONBody(req);
-
-      question =
-        String(body?.question ?? "").trim();
-
-      studentName =
-        String(
-          body?.studentName ?? "Student"
-        ).trim() || "Student";
-
-      subjects =
-        String(body?.subjects ?? "").trim();
-
-      currentTask =
-        String(body?.currentTask ?? "").trim();
-
-      remainingTasks = Number(
-        body?.remainingTasks ?? 0
-      );
-
-      focusedMinutes = Number(
-        body?.focusedMinutes ?? 0
-      );
-
-      dailyHours = Number(
-        body?.dailyHours ?? 3
-      );
-    }
-
-    // -------------------------------------------------
-    // VALIDATE
+    // VALIDATION
     // -------------------------------------------------
 
     if (!question) {
       sendJSON(res, 400, {
         error: "Please enter a question.",
       });
-
       return;
     }
 
@@ -537,9 +404,21 @@ export default async function handler(
       studentName,
       subjects,
       currentTask,
-      remainingTasks,
-      focusedMinutes,
-      dailyHours,
+      remainingTasks: Number.isFinite(
+        remainingTasks
+      )
+        ? remainingTasks
+        : 0,
+      focusedMinutes: Number.isFinite(
+        focusedMinutes
+      )
+        ? focusedMinutes
+        : 0,
+      dailyHours: Number.isFinite(
+        dailyHours
+      )
+        ? dailyHours
+        : 3,
     });
 
     // -------------------------------------------------
@@ -573,7 +452,6 @@ export default async function handler(
         error:
           "Gemini took too long to respond. Please try again.",
       });
-
       return;
     }
 
