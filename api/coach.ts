@@ -1,6 +1,9 @@
 // api/coach.ts
 
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type {
+  IncomingMessage,
+  ServerResponse,
+} from "node:http";
 
 export const config = {
   api: {
@@ -8,10 +11,10 @@ export const config = {
   },
 };
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_MODEL = "gemini-3.6-flash";
 
 const GEMINI_URL =
-  `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+  "https://generativelanguage.googleapis.com/v1beta/interactions";
 
 function sendJSON(
   res: ServerResponse,
@@ -20,12 +23,21 @@ function sendJSON(
 ) {
   res.statusCode = status;
 
-  res.setHeader("Content-Type", "application/json");
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader(
+    "Content-Type",
+    "application/json"
+  );
+
+  res.setHeader(
+    "Access-Control-Allow-Origin",
+    "*"
+  );
+
   res.setHeader(
     "Access-Control-Allow-Methods",
     "POST, OPTIONS"
   );
+
   res.setHeader(
     "Access-Control-Allow-Headers",
     "Content-Type"
@@ -46,9 +58,17 @@ async function readBody(
 
     req.on("end", () => {
       try {
-        resolve(body ? JSON.parse(body) : {});
+        resolve(
+          body
+            ? JSON.parse(body)
+            : {}
+        );
       } catch {
-        reject(new Error("Invalid JSON request."));
+        reject(
+          new Error(
+            "Invalid JSON request."
+          )
+        );
       }
     });
 
@@ -68,80 +88,52 @@ function buildPrompt(data: {
   return `
 You are Study Coach, an AI academic assistant inside a student productivity application.
 
-STUDENT INFORMATION
+STUDENT:
+Name: ${data.studentName || "Student"}
+Subjects: ${data.subjects || "Not provided"}
+Current task: ${data.currentTask || "Not provided"}
+Remaining tasks: ${data.remainingTasks}
+Focused minutes: ${data.focusedMinutes}
+Daily target: ${data.dailyHours} hours
 
-Student name:
-${data.studentName || "Student"}
-
-Subjects:
-${data.subjects || "Not provided"}
-
-Current task:
-${data.currentTask || "Not provided"}
-
-Remaining tasks:
-${data.remainingTasks}
-
-Focused study minutes:
-${data.focusedMinutes}
-
-Daily study target:
-${data.dailyHours} hours
-
-
-YOUR ROLE
+YOUR JOB:
 
 Help the student with:
-
 - academic questions
+- mathematics
+- physics
+- engineering
+- programming
 - concepts
 - formulas
 - numerical problems
-- programming
-- engineering
-- mathematics
-- physics
 - exam preparation
 - revision
 - study planning
 
-
-IMPORTANT MATHEMATICAL FORMATTING
+MATHEMATICAL FORMAT:
 
 Do NOT use LaTeX.
 
-Use simple readable mathematical notation.
-
-Examples:
+Use simple notation:
 
 F = ma
+V = IR
+P = VI
 v = u + at
 s = ut + 1/2 at²
 E = mc²
-V = IR
-P = VI
-
-For fractions:
-1/2
-
-For square roots:
 √x
-
-For multiplication:
-×
-
-For powers:
 x²
-x³
-xⁿ
+Δ
+Ω
+α
+β
+θ
 
-For Greek letters:
-α β γ θ λ μ π σ ω Δ Ω
+NUMERICAL QUESTIONS:
 
-
-NUMERICAL QUESTIONS
-
-For numerical questions use:
+Use:
 
 1. GIVEN
 2. FIND
@@ -150,14 +142,11 @@ For numerical questions use:
 5. CALCULATION
 6. FINAL ANSWER
 
-Always include units where applicable.
+Always include units.
 
-Show calculations clearly.
+CONCEPTUAL QUESTIONS:
 
-
-CONCEPTUAL QUESTIONS
-
-For conceptual questions give:
+Use:
 
 1. Definition
 2. Simple explanation
@@ -166,34 +155,18 @@ For conceptual questions give:
 5. Important points
 6. Short takeaway
 
+STUDY QUESTIONS:
 
-STUDY QUESTIONS
+Give realistic and practical advice.
 
-If the student asks for study planning, revision, or exam preparation:
+ANSWER STYLE:
 
-- Give practical steps.
-- Keep the plan realistic.
-- Prioritize important topics.
-- Use simple language.
-- Consider the student's available study time.
-
-
-ANSWER STYLE
-
-Be:
-
-- clear
-- accurate
-- organized
-- student-friendly
-- concise but helpful
-
-Use headings and numbered lists when useful.
+Be clear, accurate, organized,
+student-friendly, and helpful.
 
 Do not use unnecessarily complicated language.
 
-
-STUDENT REQUEST
+STUDENT REQUEST:
 
 ${data.question}
 `;
@@ -204,54 +177,79 @@ async function callGemini(
   prompt: string,
   pdfBase64?: string
 ) {
-  const parts: any[] = [
+  const inputParts: any[] = [
     {
+      type: "text",
       text: prompt,
     },
   ];
 
   if (pdfBase64) {
-    parts.push({
-      inlineData: {
-        mimeType: "application/pdf",
+    inputParts.push({
+      type: "file",
+      file: {
+        mime_type: "application/pdf",
         data: pdfBase64,
       },
     });
   }
 
-  const controller = new AbortController();
+  const controller =
+    new AbortController();
 
   const timeout = setTimeout(() => {
     controller.abort();
   }, 55000);
 
   try {
-    const response = await fetch(GEMINI_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts,
-          },
-        ],
-        generationConfig: {
-          maxOutputTokens: 3000,
+    const response = await fetch(
+      GEMINI_URL,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+
+          "x-goog-api-key":
+            apiKey,
         },
-      }),
-      signal: controller.signal,
-    });
 
-    const rawText = await response.text();
+        body: JSON.stringify({
+          model: GEMINI_MODEL,
 
-    let data: any;
+          input: {
+            role: "user",
+            parts: inputParts,
+          },
+        }),
+
+        signal: controller.signal,
+      }
+    );
+
+    const rawText =
+      await response.text();
+
+    console.log(
+      "Gemini status:",
+      response.status
+    );
+
+    console.log(
+      "Gemini response:",
+      rawText.substring(
+        0,
+        2000
+      )
+    );
+
+    let data: any = {};
 
     try {
-      data = rawText ? JSON.parse(rawText) : {};
+      data = rawText
+        ? JSON.parse(rawText)
+        : {};
     } catch {
       throw new Error(
         "Gemini returned an invalid response."
@@ -259,29 +257,102 @@ async function callGemini(
     }
 
     if (!response.ok) {
-      console.error(
-        "Gemini API error:",
-        JSON.stringify(data, null, 2)
-      );
-
       throw new Error(
         data?.error?.message ||
-          `Gemini request failed with status ${response.status}.`
+          `Gemini request failed (${response.status}).`
       );
     }
 
-    const answer =
-      data?.candidates?.[0]?.content?.parts
-        ?.map(
-          (part: { text?: string }) =>
-            part?.text || ""
-        )
-        .join("")
-        .trim();
+    // -----------------------------------------
+    // Extract text from Interactions response
+    // -----------------------------------------
+
+    let answer = "";
+
+    if (
+      typeof data?.output_text ===
+      "string"
+    ) {
+      answer =
+        data.output_text.trim();
+    }
+
+    if (!answer && Array.isArray(data?.outputs)) {
+      for (
+        const output of data.outputs
+      ) {
+        if (
+          output?.type ===
+            "text" &&
+          typeof output?.text ===
+            "string"
+        ) {
+          answer +=
+            output.text;
+        }
+
+        if (
+          Array.isArray(
+            output?.content
+          )
+        ) {
+          for (
+            const item of
+              output.content
+          ) {
+            if (
+              typeof item?.text ===
+              "string"
+            ) {
+              answer +=
+                item.text;
+            }
+          }
+        }
+      }
+
+      answer =
+        answer.trim();
+    }
+
+    // -----------------------------------------
+    // Fallback for step-based response
+    // -----------------------------------------
+
+    if (
+      !answer &&
+      Array.isArray(data?.steps)
+    ) {
+      for (
+        const step of data.steps
+      ) {
+        if (
+          Array.isArray(
+            step?.content
+          )
+        ) {
+          for (
+            const item of
+              step.content
+          ) {
+            if (
+              typeof item?.text ===
+              "string"
+            ) {
+              answer +=
+                item.text;
+            }
+          }
+        }
+      }
+
+      answer =
+        answer.trim();
+    }
 
     if (!answer) {
       throw new Error(
-        "Gemini returned an empty response."
+        "Gemini returned an empty answer."
       );
     }
 
@@ -296,10 +367,6 @@ export default async function handler(
   res: ServerResponse
 ) {
   try {
-    // -------------------------------------------------
-    // CORS
-    // -------------------------------------------------
-
     res.setHeader(
       "Access-Control-Allow-Origin",
       "*"
@@ -315,143 +382,153 @@ export default async function handler(
       "Content-Type"
     );
 
-    // -------------------------------------------------
     // OPTIONS
-    // -------------------------------------------------
-
-    if (req.method === "OPTIONS") {
+    if (
+      req.method ===
+      "OPTIONS"
+    ) {
       res.statusCode = 204;
       res.end();
       return;
     }
 
-    // -------------------------------------------------
     // POST ONLY
-    // -------------------------------------------------
-
-    if (req.method !== "POST") {
+    if (
+      req.method !==
+      "POST"
+    ) {
       sendJSON(res, 405, {
-        error: "Method not allowed. Use POST.",
+        error:
+          "Method not allowed. Use POST.",
       });
+
       return;
     }
 
-    // -------------------------------------------------
     // API KEY
-    // -------------------------------------------------
-
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey =
+      process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
       sendJSON(res, 500, {
         error:
-          "GEMINI_API_KEY is not configured in Vercel.",
+          "GEMINI_API_KEY is missing from Vercel.",
       });
+
       return;
     }
 
-    // -------------------------------------------------
-    // READ JSON
-    // -------------------------------------------------
-
-    const body = await readBody(req);
+    // BODY
+    const body =
+      await readBody(req);
 
     const question =
-      String(body?.question ?? "").trim();
-
-    const studentName =
       String(
-        body?.studentName ?? "Student"
-      ).trim() || "Student";
-
-    const subjects =
-      String(body?.subjects ?? "").trim();
-
-    const currentTask =
-      String(body?.currentTask ?? "").trim();
-
-    const remainingTasks =
-      Number(body?.remainingTasks ?? 0);
-
-    const focusedMinutes =
-      Number(body?.focusedMinutes ?? 0);
-
-    const dailyHours =
-      Number(body?.dailyHours ?? 3);
-
-    const pdfBase64 =
-      typeof body?.pdfBase64 === "string"
-        ? body.pdfBase64
-        : "";
-
-    // -------------------------------------------------
-    // VALIDATION
-    // -------------------------------------------------
+        body?.question ?? ""
+      ).trim();
 
     if (!question) {
       sendJSON(res, 400, {
-        error: "Please enter a question.",
+        error:
+          "Please enter a question.",
       });
+
       return;
     }
 
-    // -------------------------------------------------
-    // PROMPT
-    // -------------------------------------------------
+    const studentName =
+      String(
+        body?.studentName ??
+          "Student"
+      );
 
-    const prompt = buildPrompt({
-      question,
-      studentName,
-      subjects,
-      currentTask,
-      remainingTasks: Number.isFinite(
-        remainingTasks
-      )
-        ? remainingTasks
-        : 0,
-      focusedMinutes: Number.isFinite(
-        focusedMinutes
-      )
-        ? focusedMinutes
-        : 0,
-      dailyHours: Number.isFinite(
-        dailyHours
-      )
-        ? dailyHours
-        : 3,
-    });
+    const subjects =
+      String(
+        body?.subjects ?? ""
+      );
 
-    // -------------------------------------------------
-    // GEMINI
-    // -------------------------------------------------
+    const currentTask =
+      String(
+        body?.currentTask ?? ""
+      );
 
-    const answer = await callGemini(
-      apiKey,
-      prompt,
-      pdfBase64 || undefined
-    );
+    const remainingTasks =
+      Number(
+        body?.remainingTasks ??
+          0
+      );
 
-    // -------------------------------------------------
-    // SUCCESS
-    // -------------------------------------------------
+    const focusedMinutes =
+      Number(
+        body?.focusedMinutes ??
+          0
+      );
+
+    const dailyHours =
+      Number(
+        body?.dailyHours ??
+          3
+      );
+
+    const pdfBase64 =
+      typeof body?.pdfBase64 ===
+      "string"
+        ? body.pdfBase64
+        : "";
+
+    const prompt =
+      buildPrompt({
+        question,
+        studentName,
+        subjects,
+        currentTask,
+        remainingTasks:
+          Number.isFinite(
+            remainingTasks
+          )
+            ? remainingTasks
+            : 0,
+        focusedMinutes:
+          Number.isFinite(
+            focusedMinutes
+          )
+            ? focusedMinutes
+            : 0,
+        dailyHours:
+          Number.isFinite(
+            dailyHours
+          )
+            ? dailyHours
+            : 3,
+      });
+
+    const answer =
+      await callGemini(
+        apiKey,
+        prompt,
+        pdfBase64 ||
+          undefined
+      );
 
     sendJSON(res, 200, {
       answer,
     });
   } catch (error) {
     console.error(
-      "Study Coach server error:",
+      "Study Coach error:",
       error
     );
 
     if (
       error instanceof Error &&
-      error.name === "AbortError"
+      error.name ===
+        "AbortError"
     ) {
       sendJSON(res, 504, {
         error:
           "Gemini took too long to respond. Please try again.",
       });
+
       return;
     }
 
@@ -459,7 +536,7 @@ export default async function handler(
       error:
         error instanceof Error
           ? error.message
-          : "Something went wrong while contacting Study Coach.",
+          : "Study Coach failed.",
     });
   }
 }
